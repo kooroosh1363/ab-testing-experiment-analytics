@@ -7,6 +7,7 @@ from src.analytics import (
     executive_summary,
     holm_adjust,
     retention_analysis,
+    sample_ratio_mismatch,
 )
 
 
@@ -49,6 +50,20 @@ def test_assignment_balance_reconciles_population():
     out = assignment_balance(fixture())
     assert out["players"].sum() == 12
     assert round(out["allocation_pct"].sum(), 8) == 100
+
+
+def test_sample_ratio_mismatch_detects_large_imbalance_and_validates_share():
+    balanced = sample_ratio_mismatch(fixture()).iloc[0]
+    assert balanced["srm_flag_05"] == False
+
+    df = pd.concat([fixture().iloc[:6], fixture().iloc[6:].head(2)], ignore_index=True)
+    df["userid"] = range(1, len(df) + 1)
+    out = sample_ratio_mismatch(df).iloc[0]
+    assert out["srm_flag_05"] == True
+    assert out["observed_control_share_pct"] == pytest.approx(75.0)
+
+    with pytest.raises(ValueError, match="strictly between"):
+        sample_ratio_mismatch(fixture(), expected_control_share=1.0)
 
 
 def test_retention_analysis_preserves_direction_and_ci_fields():
