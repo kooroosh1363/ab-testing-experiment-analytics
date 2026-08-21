@@ -8,6 +8,7 @@ from src.analytics import (
     engagement_test,
     executive_summary,
     retention_analysis,
+    sample_ratio_mismatch,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,7 @@ def main() -> None:
     df = pd.read_csv(RAW)
 
     assignment_balance(df).to_csv(OUT / "assignment_balance.csv", index=False)
+    sample_ratio_mismatch(df).to_csv(OUT / "sample_ratio_mismatch.csv", index=False)
     retention_analysis(df).to_csv(OUT / "retention_inference.csv", index=False)
     engagement_diagnostics(df).to_csv(OUT / "engagement_diagnostics.csv", index=False)
     engagement_test(df).to_csv(OUT / "engagement_test.csv", index=False)
