@@ -1,0 +1,73 @@
+name: Experiment Analytics CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  analytics-validation:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run unit tests
+        run: python -m pytest -q
+      - name: Download public Cookie Cats data
+        run: python -m src.download_data
+      - name: Execute experiment pipeline
+        run: python -m src.run_analysis
+      - name: Validate deliverables
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          expected = [
+              'assignment_balance.csv',
+              'sample_ratio_mismatch.csv',
+              'retention_inference.csv',
+              'engagement_diagnostics.csv',
+              'engagement_test.csv',
+              'executive_summary.csv',
+          ]
+          out = Path('outputs')
+          for name in expected:
+              path = out / name
+              assert path.exists() and path.stat().st_size > 0, f'Missing {name}'
+
+          raw = pd.read_csv('data/raw/cookie_cats.csv')
+          assert len(raw) == 90189, f'Unexpected row count: {len(raw)}'
+          assert raw['userid'].is_unique
+          assert set(raw['version']) == {'gate_30', 'gate_40'}
+
+          balance = pd.read_csv(out / 'assignment_balance.csv')
+          assert balance['players'].sum() == len(raw)
+          counts = dict(zip(balance['version'], balance['players']))
+          assert counts == {'gate_30': 44700, 'gate_40': 45489}
+
+          srm = pd.read_csv(out / 'sample_ratio_mismatch.csv').iloc[0]
+          assert srm['observed_control_share_pct'] > 49 and srm['observed_control_share_pct'] < 50
+          assert 0 <= srm['p_value'] <= 1
+
+          ret = pd.read_csv(out / 'retention_inference.csv').set_index('metric')
+          assert set(ret.index) == {'retention_1', 'retention_7'}
+          assert ret['p_value'].between(0, 1).all()
+          assert ret['holm_adjusted_p_value'].between(0, 1).all()
+          assert abs(ret.loc['retention_1', 'control_rate_pct'] - 44.8188) < 0.01
+          assert abs(ret.loc['retention_1', 'treatment_rate_pct'] - 44.2283) < 0.01
+          assert abs(ret.loc['retention_7', 'control_rate_pct'] - 19.0179) < 0.01
+          assert abs(ret.loc['retention_7', 'treatment_rate_pct'] - 18.2000) < 0.01
+          assert ret.loc['retention_7', 'absolute_lift_pp'] < 0
+          assert ret.loc['retention_7', 'holm_adjusted_p_value'] < 0.05
+
+          executive = pd.read_csv(out / 'executive_summary.csv').iloc[0]
+          assert executive['primary_decision_metric'] == 'retention_7'
+          assert 'gate_30' in executive['decision']
+          print('Deliverables and known Cookie Cats results validated against 90,189 experiment units.')
+          PY
