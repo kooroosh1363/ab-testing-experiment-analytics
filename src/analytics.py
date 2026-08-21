@@ -70,28 +70,41 @@ def assignment_balance(df: pd.DataFrame) -> pd.DataFrame:
 
 def _two_proportion_result(df: pd.DataFrame, metric: str) -> ProportionResult:
     x = clean_experiment_data(df)
+    if metric not in {"retention_1", "retention_7"}:
+        raise ValueError(f"Unsupported binary endpoint: {metric}")
+
     control = x.loc[x["version"] == CONTROL, metric].astype(int)
     treatment = x.loc[x["version"] == TREATMENT, metric].astype(int)
     n_c, n_t = len(control), len(treatment)
+    if n_c == 0 or n_t == 0:
+        raise ValueError("Both experiment arms must contain observations")
+
     c_success, t_success = int(control.sum()), int(treatment.sum())
     p_c, p_t = c_success / n_c, t_success / n_t
     diff = p_t - p_c
 
-    # Unpooled Wald CI for the risk difference.
+    # Unpooled Wald CI for the risk difference. With ~45k observations per arm
+    # in Cookie Cats, the large-sample normal approximation is appropriate.
     se_diff = math.sqrt(p_c * (1 - p_c) / n_c + p_t * (1 - p_t) / n_t)
     z975 = norm.ppf(0.975)
     ci_low = diff - z975 * se_diff
     ci_high = diff + z975 * se_diff
 
-    # Pooled standard error for the null H0: p_t == p_c.
+    # Pooled standard error for the two-sided null H0: p_t == p_c.
     pooled = (c_success + t_success) / (n_c + n_t)
     se_null = math.sqrt(pooled * (1 - pooled) * (1 / n_c + 1 / n_t))
-    z_stat = diff / se_null if se_null > 0 else 0.0
-    p_value = 2 * norm.sf(abs(z_stat))
+    if se_null == 0:
+        z_stat = 0.0 if diff == 0 else math.copysign(math.inf, diff)
+        p_value = 1.0 if diff == 0 else 0.0
+    else:
+        z_stat = diff / se_null
+        p_value = 2 * norm.sf(abs(z_stat))
 
     relative = 100 * diff / p_c if p_c > 0 else np.nan
 
-    # Approximate absolute MDE for 80% power, two-sided alpha=.05 around pooled baseline.
+    # Approximate retrospective sensitivity diagnostic: absolute effect size that
+    # this realized sample could detect at ~80% power under a two-sided alpha=.05
+    # normal approximation. This is not a substitute for a pre-experiment power plan.
     z_alpha = norm.ppf(1 - 0.05 / 2)
     z_beta = norm.ppf(0.80)
     mde = (z_alpha + z_beta) * math.sqrt(pooled * (1 - pooled) * (1 / n_c + 1 / n_t))
@@ -113,7 +126,11 @@ def _two_proportion_result(df: pd.DataFrame, metric: str) -> ProportionResult:
 
 
 def holm_adjust(p_values: list[float]) -> list[float]:
+    if any((not np.isfinite(p)) or p < 0 or p > 1 for p in p_values):
+        raise ValueError("p-values must be finite values between 0 and 1")
     m = len(p_values)
+    if m == 0:
+        return []
     order = np.argsort(p_values)
     adjusted = np.empty(m, dtype=float)
     running_max = 0.0
@@ -174,22 +191,27 @@ def engagement_test(df: pd.DataFrame) -> pd.DataFrame:
         "test": "Mann-Whitney U",
         "u_statistic": float(stat),
         "p_value": float(p),
-        "note": "Secondary exploratory diagnostic; distribution is highly skewed and this is not a revenue metric.",
+        "note": "Secondary exploratory distribution test; it does not estimate a mean or median treatment effect and is not a revenue metric.",
     }])
 
 
 def executive_summary(df: pd.DataFrame) -> pd.DataFrame:
     ret = retention_analysis(df)
     r7 = ret.loc[ret["metric"] == "retention_7"].iloc[0]
-    recommendation = (
-        "Evidence favors keeping gate_30 for 7-day retention."
-        if r7["absolute_lift_pp"] < 0 and r7["holm_adjusted_p_value"] < 0.05
-        else "No statistically robust evidence to prefer gate_40 on 7-day retention."
-    )
+    significant = bool(r7["holm_adjusted_p_value"] < 0.05)
+    effect = float(r7["absolute_lift_pp"])
+
+    if significant and effect > 0:
+        recommendation = "Evidence favors gate_40 for 7-day retention."
+    elif significant and effect < 0:
+        recommendation = "Evidence favors keeping gate_30 for 7-day retention."
+    else:
+        recommendation = "No statistically robust retention evidence to prefer either gate under the Holm-adjusted decision rule."
+
     return pd.DataFrame([{
         "players": len(clean_experiment_data(df)),
         "primary_decision_metric": "retention_7",
-        "treatment_minus_control_pp": r7["absolute_lift_pp"],
+        "treatment_minus_control_pp": effect,
         "holm_adjusted_p_value": r7["holm_adjusted_p_value"],
         "decision": recommendation,
     }])
