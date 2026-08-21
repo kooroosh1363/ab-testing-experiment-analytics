@@ -56,11 +56,16 @@ def test_sample_ratio_mismatch_detects_large_imbalance_and_validates_share():
     balanced = sample_ratio_mismatch(fixture()).iloc[0]
     assert balanced["srm_flag_05"] == False
 
-    df = pd.concat([fixture().iloc[:6], fixture().iloc[6:].head(2)], ignore_index=True)
-    df["userid"] = range(1, len(df) + 1)
+    df = pd.DataFrame({
+        "userid": range(1, 21),
+        "version": ["gate_30"] * 18 + ["gate_40"] * 2,
+        "sum_gamerounds": [10] * 20,
+        "retention_1": [True, False] * 10,
+        "retention_7": [True, False] * 10,
+    })
     out = sample_ratio_mismatch(df).iloc[0]
     assert out["srm_flag_05"] == True
-    assert out["observed_control_share_pct"] == pytest.approx(75.0)
+    assert out["observed_control_share_pct"] == pytest.approx(90.0)
 
     with pytest.raises(ValueError, match="strictly between"):
         sample_ratio_mismatch(fixture(), expected_control_share=1.0)
