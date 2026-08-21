@@ -1,0 +1,56 @@
+name: Experiment Analytics CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  analytics-validation:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run unit tests
+        run: python -m pytest -q
+      - name: Download public Cookie Cats data
+        run: python -m src.download_data
+      - name: Execute experiment pipeline
+        run: python -m src.run_analysis
+      - name: Validate deliverables
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          expected = [
+              'assignment_balance.csv',
+              'retention_inference.csv',
+              'engagement_diagnostics.csv',
+              'engagement_test.csv',
+              'executive_summary.csv',
+          ]
+          out = Path('outputs')
+          for name in expected:
+              path = out / name
+              assert path.exists() and path.stat().st_size > 0, f'Missing {name}'
+
+          raw = pd.read_csv('data/raw/cookie_cats.csv')
+          assert len(raw) == 90189, f'Unexpected row count: {len(raw)}'
+          assert raw['userid'].is_unique
+          assert set(raw['version']) == {'gate_30', 'gate_40'}
+
+          balance = pd.read_csv(out / 'assignment_balance.csv')
+          assert balance['players'].sum() == len(raw)
+
+          ret = pd.read_csv(out / 'retention_inference.csv')
+          assert set(ret['metric']) == {'retention_1', 'retention_7'}
+          assert ret['p_value'].between(0, 1).all()
+          assert ret['holm_adjusted_p_value'].between(0, 1).all()
+          print('Deliverables validated against 90,189 experiment units.')
+          PY
