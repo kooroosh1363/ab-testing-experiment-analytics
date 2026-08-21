@@ -17,9 +17,9 @@ DA-10 treats `gate_30` as control and `gate_40` as treatment and focuses on defe
 - 95% confidence intervals for the risk difference
 - two-sided two-proportion z-tests
 - Holm correction across the two retention endpoints
-- approximate 80%-power minimum detectable effect
+- approximate realized-sample 80%-power sensitivity / MDE diagnostic
 - `sum_gamerounds` distribution diagnostics
-- Mann-Whitney U as a secondary exploratory engagement test
+- Mann-Whitney U as a secondary exploratory distribution test
 - executive recommendation tied to 7-day retention
 
 ## Data
@@ -63,11 +63,21 @@ For each retention endpoint, the pipeline estimates the treatment-control risk d
 
 Because both `retention_1` and `retention_7` are examined, raw p-values are also corrected using the Holm procedure to control family-wise error. The executive decision uses 7-day retention as the primary business outcome rather than cherry-picking whichever endpoint produces the smallest p-value.
 
-The project also reports an approximate absolute MDE at 80% power to distinguish "not significant" from "the experiment had enough sensitivity to detect a business-relevant effect."
+The project reports an approximate absolute MDE / sensitivity diagnostic at 80% power for the **realized sample size** under a large-sample normal approximation. This is useful context for interpreting a null result, but it is explicitly **not** presented as a substitute for a pre-experiment power and sample-size plan.
 
 ## Engagement diagnostic
 
-`sum_gamerounds` is highly skewed, so the project reports mean, median, p95, and maximum by arm and uses a Mann-Whitney U test as a **secondary exploratory diagnostic**. It is not treated as a revenue metric and does not override the retention decision rule.
+`sum_gamerounds` is highly skewed, so the project reports mean, median, p95, and maximum by arm and uses a Mann-Whitney U test as a **secondary exploratory distribution test**. The test can detect distributional differences, but it should not be described as a direct test of the mean or median treatment effect. It is not treated as a revenue metric and does not override the retention decision rule.
+
+## Decision rule
+
+The executive layer is directional and symmetric:
+
+- significant positive `gate_40 - gate_30` effect on 7-day retention → evidence favors `gate_40`
+- significant negative effect → evidence favors keeping `gate_30`
+- otherwise → no statistically robust evidence to prefer either gate under the Holm-adjusted rule
+
+This avoids a one-sided implementation bug in which only a significant negative treatment effect could generate a positive recommendation for the control.
 
 ## Analytical boundaries
 
@@ -83,7 +93,7 @@ GitHub Actions:
 4. runs the complete experiment pipeline,
 5. validates the expected **90,189 experiment units** and all deliverables.
 
-Tests cover experiment-unit uniqueness, assignment reconciliation, inference direction, confidence interval fields, Holm correction, and the 7-day-retention decision rule.
+Tests cover experiment-unit uniqueness, assignment reconciliation, inference direction, confidence interval fields, Holm correction against a known example, invalid p-value rejection, the 7-day-retention decision rule, and both directions of statistically significant recommendations.
 
 ## Portfolio signal
 
