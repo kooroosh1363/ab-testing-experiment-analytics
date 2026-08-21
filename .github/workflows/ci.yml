@@ -30,6 +30,7 @@ jobs:
 
           expected = [
               'assignment_balance.csv',
+              'sample_ratio_mismatch.csv',
               'retention_inference.csv',
               'engagement_diagnostics.csv',
               'engagement_test.csv',
@@ -47,10 +48,26 @@ jobs:
 
           balance = pd.read_csv(out / 'assignment_balance.csv')
           assert balance['players'].sum() == len(raw)
+          counts = dict(zip(balance['version'], balance['players']))
+          assert counts == {'gate_30': 44700, 'gate_40': 45489}
 
-          ret = pd.read_csv(out / 'retention_inference.csv')
-          assert set(ret['metric']) == {'retention_1', 'retention_7'}
+          srm = pd.read_csv(out / 'sample_ratio_mismatch.csv').iloc[0]
+          assert srm['observed_control_share_pct'] > 49 and srm['observed_control_share_pct'] < 50
+          assert 0 <= srm['p_value'] <= 1
+
+          ret = pd.read_csv(out / 'retention_inference.csv').set_index('metric')
+          assert set(ret.index) == {'retention_1', 'retention_7'}
           assert ret['p_value'].between(0, 1).all()
           assert ret['holm_adjusted_p_value'].between(0, 1).all()
-          print('Deliverables validated against 90,189 experiment units.')
+          assert abs(ret.loc['retention_1', 'control_rate_pct'] - 44.8188) < 0.01
+          assert abs(ret.loc['retention_1', 'treatment_rate_pct'] - 44.2283) < 0.01
+          assert abs(ret.loc['retention_7', 'control_rate_pct'] - 19.0179) < 0.01
+          assert abs(ret.loc['retention_7', 'treatment_rate_pct'] - 18.2000) < 0.01
+          assert ret.loc['retention_7', 'absolute_lift_pp'] < 0
+          assert ret.loc['retention_7', 'holm_adjusted_p_value'] < 0.05
+
+          executive = pd.read_csv(out / 'executive_summary.csv').iloc[0]
+          assert executive['primary_decision_metric'] == 'retention_7'
+          assert 'gate_30' in executive['decision']
+          print('Deliverables and known Cookie Cats results validated against 90,189 experiment units.')
           PY
