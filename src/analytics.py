@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy.stats import norm, mannwhitneyu
+from scipy.stats import chisquare, mannwhitneyu, norm
 
 CONTROL = "gate_30"
 TREATMENT = "gate_40"
@@ -66,6 +66,42 @@ def assignment_balance(df: pd.DataFrame) -> pd.DataFrame:
         "players": counts.values,
         "allocation_pct": 100 * counts.values / total,
     })
+
+
+def sample_ratio_mismatch(df: pd.DataFrame, expected_control_share: float = 0.5) -> pd.DataFrame:
+    """Check observed allocation against an explicit expected split.
+
+    A statistically detectable mismatch is a diagnostic, not proof of broken
+    randomization. Interpretation depends on whether the assumed allocation
+    ratio matches the experiment's actual traffic-allocation configuration.
+    """
+    if not 0 < expected_control_share < 1:
+        raise ValueError("expected_control_share must be strictly between 0 and 1")
+
+    x = clean_experiment_data(df)
+    counts = x["version"].value_counts().reindex([CONTROL, TREATMENT]).astype(int)
+    total = int(counts.sum())
+    expected = np.array([
+        total * expected_control_share,
+        total * (1 - expected_control_share),
+    ], dtype=float)
+    stat, p_value = chisquare(counts.to_numpy(dtype=float), f_exp=expected)
+
+    return pd.DataFrame([{
+        "assumed_control_share_pct": 100 * expected_control_share,
+        "control_players": int(counts.loc[CONTROL]),
+        "treatment_players": int(counts.loc[TREATMENT]),
+        "observed_control_share_pct": 100 * counts.loc[CONTROL] / total,
+        "absolute_allocation_gap_pp": 100 * (counts.loc[CONTROL] / total - expected_control_share),
+        "chi_square_statistic": float(stat),
+        "p_value": float(p_value),
+        "srm_flag_05": bool(p_value < 0.05),
+        "interpretation": (
+            "Observed allocation differs statistically from the assumed split; verify the intended traffic allocation before treating this as randomization failure."
+            if p_value < 0.05
+            else "No statistically detectable allocation mismatch under the assumed split."
+        ),
+    }])
 
 
 def _two_proportion_result(df: pd.DataFrame, metric: str) -> ProportionResult:
